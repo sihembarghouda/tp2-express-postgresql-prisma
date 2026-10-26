@@ -1,10 +1,10 @@
-
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
+import { categorySchema } from "../validators/category.schema.js";
 
 const router = Router();
 
-// GET /api/categories : récupérer toutes les catégories
+// GET /api/categories
 router.get("/", async (_req, res, next) => {
   try {
     const categories = await prisma.category.findMany({
@@ -18,7 +18,7 @@ router.get("/", async (_req, res, next) => {
   }
 });
 
-// GET /api/categories/:id : récupérer une catégorie
+// GET /api/categories/:id
 router.get("/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -44,19 +44,24 @@ router.get("/:id", async (req, res, next) => {
   }
 });
 
-// POST /api/categories : créer une catégorie
+// POST /api/categories
 router.post("/", async (req, res, next) => {
   try {
-    const name =
-      typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const validation = categorySchema.safeParse(req.body);
 
-    if (!name) {
-      res.status(400).json({ error: "Le nom est obligatoire" });
+    if (!validation.success) {
+      res.status(400).json({
+        error: "Données de catégorie invalides",
+        details: validation.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          message: issue.message,
+        })),
+      });
       return;
     }
 
     const category = await prisma.category.create({
-      data: { name },
+      data: validation.data,
     });
 
     res.status(201).json(category);
@@ -65,23 +70,32 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-// PUT /api/categories/:id : modifier une catégorie
+// PUT /api/categories/:id
 router.put("/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const name =
-      typeof req.body?.name === "string" ? req.body.name.trim() : "";
 
-    if (!Number.isInteger(id) || id <= 0 || !name) {
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: "ID de catégorie invalide" });
+      return;
+    }
+
+    const validation = categorySchema.safeParse(req.body);
+
+    if (!validation.success) {
       res.status(400).json({
-        error: "ID valide et nom obligatoire",
+        error: "Données de catégorie invalides",
+        details: validation.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          message: issue.message,
+        })),
       });
       return;
     }
 
     const category = await prisma.category.update({
       where: { id },
-      data: { name },
+      data: validation.data,
     });
 
     res.json(category);
@@ -90,7 +104,7 @@ router.put("/:id", async (req, res, next) => {
   }
 });
 
-// DELETE /api/categories/:id : supprimer une catégorie
+// DELETE /api/categories/:id
 router.delete("/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -101,7 +115,6 @@ router.delete("/:id", async (req, res, next) => {
     }
 
     await prisma.category.delete({ where: { id } });
-
     res.status(204).send();
   } catch (error) {
     next(error);

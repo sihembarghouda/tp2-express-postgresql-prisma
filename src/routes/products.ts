@@ -1,25 +1,66 @@
-
 import { Router } from "express";
 import { Prisma } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
+import { productSchema } from "../validators/product.schema.js";
 
 const router = Router();
 
-// GET /api/products : récupérer tous les produits
-router.get("/", async (_req, res, next) => {
+// GET /api/products : rechercher et lister les produits avec pagination
+router.get("/", async (req, res, next) => {
   try {
-    const products = await prisma.product.findMany({
-      include: { category: true },
-      orderBy: { id: "desc" },
-    });
+    const page = Number(req.query.page ?? 1);
+    const limit = Number(req.query.limit ?? 10);
+    const search =
+      typeof req.query.search === "string" ? req.query.search.trim() : "";
 
-    res.json(products);
+    if (
+      !Number.isInteger(page) ||
+      page < 1 ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 100
+    ) {
+      res.status(400).json({
+        error: "page doit être positif et limit doit être compris entre 1 et 100",
+      });
+      return;
+    }
+
+    const where: Prisma.ProductWhereInput = search
+      ? {
+          title: {
+            contains: search,
+            mode: "insensitive",
+          },
+        }
+      : {};
+
+    const [products, total] = await Promise.all([
+      prisma.product.findMany({
+        where,
+        include: { category: true },
+        orderBy: { id: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.product.count({ where }),
+    ]);
+
+    res.json({
+      data: products,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (error) {
     next(error);
   }
 });
 
-// GET /api/products/:id : récupérer un produit
+// GET /api/products/:id
 router.get("/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -45,32 +86,30 @@ router.get("/:id", async (req, res, next) => {
   }
 });
 
-// POST /api/products : créer un produit
+// POST /api/products
 router.post("/", async (req, res, next) => {
   try {
-    const { title, description, price, image, categoryId } = req.body ?? {};
+    const validation = productSchema.safeParse(req.body);
 
-    if (
-      typeof title !== "string" ||
-      !title.trim() ||
-      typeof price !== "number" ||
-      !Number.isFinite(price) ||
-      price < 0 ||
-      !Number.isInteger(categoryId) ||
-      categoryId <= 0
-    ) {
+    if (!validation.success) {
       res.status(400).json({
-        error: "title, price et categoryId sont obligatoires et doivent être valides",
+        error: "Données du produit invalides",
+        details: validation.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          message: issue.message,
+        })),
       });
       return;
     }
 
+    const { title, description, price, image, categoryId } = validation.data;
+
     const product = await prisma.product.create({
       data: {
-        title: title.trim(),
-        description: typeof description === "string" ? description : "",
+        title,
+        description,
         price: new Prisma.Decimal(price),
-        image: typeof image === "string" ? image : "",
+        image,
         category: { connect: { id: categoryId } },
       },
       include: { category: true },
@@ -82,39 +121,38 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-// PUT /api/products/:id : modifier un produit
+// PUT /api/products/:id
 router.put("/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const { title, description, price, image, categoryId } = req.body ?? {};
 
     if (!Number.isInteger(id) || id <= 0) {
       res.status(400).json({ error: "ID de produit invalide" });
       return;
     }
 
-    if (
-      typeof title !== "string" ||
-      !title.trim() ||
-      typeof price !== "number" ||
-      !Number.isFinite(price) ||
-      price < 0 ||
-      !Number.isInteger(categoryId) ||
-      categoryId <= 0
-    ) {
+    const validation = productSchema.safeParse(req.body);
+
+    if (!validation.success) {
       res.status(400).json({
-        error: "title, price et categoryId sont obligatoires et doivent être valides",
+        error: "Données du produit invalides",
+        details: validation.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          message: issue.message,
+        })),
       });
       return;
     }
 
+    const { title, description, price, image, categoryId } = validation.data;
+
     const product = await prisma.product.update({
       where: { id },
       data: {
-        title: title.trim(),
-        description: typeof description === "string" ? description : "",
+        title,
+        description,
         price: new Prisma.Decimal(price),
-        image: typeof image === "string" ? image : "",
+        image,
         category: { connect: { id: categoryId } },
       },
       include: { category: true },
@@ -126,7 +164,7 @@ router.put("/:id", async (req, res, next) => {
   }
 });
 
-// DELETE /api/products/:id : supprimer un produit
+// DELETE /api/products/:id
 router.delete("/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -137,7 +175,6 @@ router.delete("/:id", async (req, res, next) => {
     }
 
     await prisma.product.delete({ where: { id } });
-
     res.status(204).send();
   } catch (error) {
     next(error);
